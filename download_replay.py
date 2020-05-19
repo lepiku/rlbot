@@ -14,10 +14,10 @@ GET_REPLAYS_PARAMS = {
     'min-rank': 'grand-champion',
     'max-rank': 'grand-champion',
     'playlist': 'ranked-duels',
-    'map': 'stadium_p',
+    'season': 14,
 }
 DOWNLOAD_FOLDER = 'replays/'
-DOWNLOAD_AMOUNT = 1000
+DOWNLOAD_AMOUNT = 5000
 TOKEN_FILENAME = 'token.txt'
 NEXT_URL_FILENAME = 'next.txt'
 THREAD = 4
@@ -93,13 +93,20 @@ def main() -> None:
             t.join()
 
         print('fetch new data...')
-        next_url = data['next']
+        if 'next' in data:
+            next_url = data['next']
 
-        # save next url
-        with open(NEXT_URL_FILENAME, 'w') as next_file:
-            next_file.write(next_url + '\n')
+            # save next url
+            with open(NEXT_URL_FILENAME, 'w') as next_file:
+                next_file.write(next_url + '\n')
 
-        response = requests_get(next_url, headers=API_HEADERS)
+            response = requests_get(next_url, headers=API_HEADERS)
+            print(response.url)
+        else:
+            print('No next url.')
+            with open(NEXT_URL_FILENAME, 'w') as next_file:
+                next_file.write('\n')
+            break
 
 class DownloadBatch(threading.Thread):
 
@@ -131,7 +138,7 @@ class DownloadBatch(threading.Thread):
                 self.lock.acquire()
                 count += 1
                 current_file_list.append(filename)
-                print(f"{self.thread_id}: {count} - downloaded {d['id']} ({retries})")
+                print(f"{self.thread_id}: {count} - downloaded {d['id']} ({retries}) {d['map_name']}")
                 enough = count >= DOWNLOAD_AMOUNT
                 self.lock.release()
 
