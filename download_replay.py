@@ -7,6 +7,7 @@ import threading
 
 import requests
 
+
 API_HEADERS = {
     'Authorization': None,
 }
@@ -25,10 +26,19 @@ THREAD = 4
 current_file_list = []
 count = 0
 
+
 def pretty(d: dict) -> None:
+    """
+    Print prettified dictionary.
+    """
     print(json.dumps(d, sort_keys=True, indent=2))
 
+
 def download_replay(replay_id: str, filename: str) -> int:
+    """
+    Download replay from ballchasing.com.
+    returns the amount of retries to download the replay.
+    """
     url = 'https://ballchasing.com/dl/replay/' + replay_id
     retries = 0
 
@@ -40,7 +50,6 @@ def download_replay(replay_id: str, filename: str) -> int:
             continue
 
         if response.status_code == 200:
-            # Write the file contents in the response to a file specified by local_file_path
             with open(filename, 'wb') as local_file:
                 for chunk in response.iter_content(chunk_size=1024):
                     local_file.write(chunk)
@@ -53,11 +62,15 @@ def download_replay(replay_id: str, filename: str) -> int:
         else:
             print('error', response)
             print(response.text)
-            raise Exception('ERROR download replay: STATUS_CODE')
+            raise Exception('ERROR download replay: unknown status code.')
 
     return retries
 
+
 def requests_get(*args, **kwargs) -> requests.Response:
+    """
+    Handled errors on requests.get
+    """
     while True:
         try:
             response = requests.get(*args, **kwargs)
@@ -72,7 +85,11 @@ def requests_get(*args, **kwargs) -> requests.Response:
 
     return response
 
+
 def main() -> None:
+    """
+    Main program
+    """
     with open(NEXT_URL_FILENAME, 'r') as next_file:
         next_url = next_file.readline().strip()
 
@@ -90,12 +107,13 @@ def main() -> None:
         thread_list = []
         thread_lock = threading.Lock()
         for n in range(THREAD):
-            thread_list.append(DownloadBatch(f't{n}', data['list'], thread_lock))
+            thread_list.append(
+                DownloadReplayThread(f't{n}', data['list'], thread_lock))
 
         for t in thread_list:
             t.join()
 
-        print('fetch new data...')
+        print('fetch next replays...')
         if 'next' in data:
             next_url = data['next']
 
@@ -111,8 +129,12 @@ def main() -> None:
                 next_file.write('\n')
             break
 
-class DownloadBatch(threading.Thread):
 
+class DownloadReplayThread(threading.Thread):
+    """
+    Thread for downloading replays.
+    get the next replay from a shared data list.
+    """
     def __init__(self, thread_id: str, data: list, lock: threading.Lock):
         super().__init__()
         self.thread_id = thread_id
@@ -125,14 +147,13 @@ class DownloadBatch(threading.Thread):
 
         enough = False
         while True:
-            self.lock.acquire()
             try:
+                self.lock.acquire()
                 d = self.data.pop()
             except IndexError:
-                print(f"ending {self.thread_id}")
+                break
+            finally:
                 self.lock.release()
-                return
-            self.lock.release()
 
             filename = d['id'] + '.replay'
             if filename not in current_file_list:
@@ -141,13 +162,15 @@ class DownloadBatch(threading.Thread):
                 self.lock.acquire()
                 count += 1
                 current_file_list.append(filename)
-                print(f"{self.thread_id}: {count} - downloaded {d['id']} ({retries}) {d['map_name']}")
+                print(f"{self.thread_id}: {count} - downloaded {d['id']}",
+                      f"({retries}) {d['map_name']}")
                 enough = count >= DOWNLOAD_AMOUNT
                 self.lock.release()
 
             if enough:
-                print(f"ending {self.thread_id}")
-                return
+                break
+
+        print(f"{self.thread_id}: stopped")
 
 
 if __name__ == '__main__':
