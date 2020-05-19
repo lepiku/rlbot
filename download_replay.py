@@ -1,8 +1,10 @@
 from os import listdir
 from sys import stdout
 from time import sleep
-
 import json
+import math
+import threading
+
 import requests
 
 API_HEADERS = {
@@ -12,23 +14,23 @@ GET_REPLAYS_PARAMS = {
     'min-rank': 'grand-champion',
     'max-rank': 'grand-champion',
     'playlist': 'ranked-duels',
-    'map': 'eurostadium_p',
+    'map': 'stadium_p',
 }
 DOWNLOAD_FOLDER = 'replays/'
 DOWNLOAD_AMOUNT = 1000
 TOKEN_FILENAME = 'token.txt'
 NEXT_URL_FILENAME = 'next.txt'
+THREAD = 4
 
 current_file_list = []
+count = 0
 
 def pretty(d: dict) -> None:
     print(json.dumps(d, sort_keys=True, indent=2))
 
-def download_replay(replay_id: str, filename: str) -> None:
+def download_replay(replay_id: str, filename: str) -> int:
     url = 'https://ballchasing.com/dl/replay/' + replay_id
-
-    stdout.write(f"{len(current_file_list) + 1}: downloading {replay_id}")
-    stdout.flush()
+    retries = 0
 
     response = requests.post(url=url)
     while True:
@@ -40,8 +42,7 @@ def download_replay(replay_id: str, filename: str) -> None:
             break
 
         elif response.status_code == 429:
-            stdout.write(".")
-            stdout.flush()
+            retries += 1
             sleep(1)
             response = requests.post(url=url)
 
@@ -50,8 +51,7 @@ def download_replay(replay_id: str, filename: str) -> None:
             print(response.text)
             raise Exception('ERROR download replay: STATUS_CODE')
 
-    stdout.write(" V\n")
-    stdout.flush()
+    return retries
 
 def requests_get(*args, **kwargs) -> requests.Response:
     response = requests.get(*args, **kwargs)
@@ -66,9 +66,6 @@ def requests_get(*args, **kwargs) -> requests.Response:
     return response
 
 def main() -> None:
-    # prepare
-    count = len(current_file_list)
-
     with open(NEXT_URL_FILENAME, 'r') as next_file:
         next_url = next_file.readline().strip()
 
@@ -83,15 +80,17 @@ def main() -> None:
     while count < DOWNLOAD_AMOUNT:
         data = response.json()
 
-        for d in data['list']:
-            filename = d['id'] + '.replay'
-            if filename not in current_file_list:
-                download_replay(d['id'], DOWNLOAD_FOLDER + filename)
-                count += 1
-                current_file_list.append(filename)
+        replay_num = len(data['list']) / THREAD
+        thread_list = []
+        thread_lock = threading.Lock()
+        for n in range(THREAD):
+            bottom_count = math.floor(n * replay_num)
+            upper_count = math.floor((n + 1) * replay_num)
+            batch = data['list'][bottom_count:upper_count]
+            thread_list.append(DownloadBatch(f't{n}', batch, thread_lock))
 
-            if count >= DOWNLOAD_AMOUNT:
-                break
+        for t in thread_list:
+            t.join()
 
         print('fetch new data...')
         next_url = data['next']
@@ -102,13 +101,43 @@ def main() -> None:
 
         response = requests_get(next_url, headers=API_HEADERS)
 
+class DownloadBatch(threading.Thread):
+
+    def __init__(self, thread_id: str, data: list, lock: threading.Lock):
+        super().__init__()
+        self.thread_id = thread_id
+        self.data = data
+        self.lock = lock
+        self.start()
+
+    def run(self):
+        global count, current_file_list
+
+        enough = False
+        for d in self.data:
+            filename = d['id'] + '.replay'
+            if filename not in current_file_list:
+                retries = download_replay(d['id'], DOWNLOAD_FOLDER + filename)
+
+                self.lock.acquire()
+                count += 1
+                current_file_list.append(filename)
+                print(f"{self.thread_id}: {count} - downloaded {d['id']} ({retries})")
+                enough = count >= DOWNLOAD_AMOUNT
+                self.lock.release()
+
+            if enough:
+                return
+
 
 if __name__ == '__main__':
     # setup
     with open(TOKEN_FILENAME, 'r') as token_file:
         token = token_file.readline().strip()
         API_HEADERS.update({'Authorization': token})
+
     current_file_list = listdir(DOWNLOAD_FOLDER)
+    count = len(current_file_list)
 
     main()
     print('done')
