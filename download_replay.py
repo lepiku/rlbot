@@ -32,8 +32,13 @@ def download_replay(replay_id: str, filename: str) -> int:
     url = 'https://ballchasing.com/dl/replay/' + replay_id
     retries = 0
 
-    response = requests.post(url=url)
     while True:
+        try:
+            response = requests.post(url=url)
+        except requests.exceptions.ConnectionError:
+            print(f"Conection Error {replay_id}")
+            continue
+
         if response.status_code == 200:
             # Write the file contents in the response to a file specified by local_file_path
             with open(filename, 'wb') as local_file:
@@ -44,7 +49,6 @@ def download_replay(replay_id: str, filename: str) -> int:
         elif response.status_code == 429:
             retries += 1
             sleep(1)
-            response = requests.post(url=url)
 
         else:
             print('error', response)
@@ -80,14 +84,10 @@ def main() -> None:
     while count < DOWNLOAD_AMOUNT:
         data = response.json()
 
-        replay_num = len(data['list']) / THREAD
         thread_list = []
         thread_lock = threading.Lock()
         for n in range(THREAD):
-            bottom_count = math.floor(n * replay_num)
-            upper_count = math.floor((n + 1) * replay_num)
-            batch = data['list'][bottom_count:upper_count]
-            thread_list.append(DownloadBatch(f't{n}', batch, thread_lock))
+            thread_list.append(DownloadBatch(f't{n}', data['list'], thread_lock))
 
         for t in thread_list:
             t.join()
@@ -114,7 +114,16 @@ class DownloadBatch(threading.Thread):
         global count, current_file_list
 
         enough = False
-        for d in self.data:
+        while True:
+            self.lock.acquire()
+            try:
+                d = self.data.pop()
+            except IndexError:
+                print(f"ending {self.thread_id}")
+                self.lock.release()
+                return
+            self.lock.release()
+
             filename = d['id'] + '.replay'
             if filename not in current_file_list:
                 retries = download_replay(d['id'], DOWNLOAD_FOLDER + filename)
@@ -127,6 +136,7 @@ class DownloadBatch(threading.Thread):
                 self.lock.release()
 
             if enough:
+                print(f"ending {self.thread_id}")
                 return
 
 
