@@ -36,7 +36,7 @@ def download_replay(replay_id: str, filename: str) -> int:
         try:
             response = requests.post(url=url)
         except requests.exceptions.ConnectionError:
-            print(f"Conection Error {replay_id}")
+            print(f"W: Conection Error downloading {replay_id}")
             continue
 
         if response.status_code == 200:
@@ -58,12 +58,15 @@ def download_replay(replay_id: str, filename: str) -> int:
     return retries
 
 def requests_get(*args, **kwargs) -> requests.Response:
-    response = requests.get(*args, **kwargs)
-
     while True:
+        try:
+            response = requests.get(*args, **kwargs)
+        except requests.exceptions.ConnectionError:
+            print(f"W: Conection Error on {args[0]}")
+            continue
+
         if response.status_code == 429:
             sleep(1)
-            response = requests.get(*args, **kwargs)
         else:
             break
 
